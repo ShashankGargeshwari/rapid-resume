@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 from pathlib import Path
@@ -49,16 +50,35 @@ def seed_defaults(conn: sqlite3.Connection) -> None:
     row = conn.execute("SELECT COUNT(*) AS count FROM resume_pointers").fetchone()
     if row and row["count"]:
         return
+    seed_path = Path(__file__).resolve().parent / "data" / "seed.json"
+    seed_data: dict[str, list[str]] = {}
+    if seed_path.exists():
+        try:
+            seed_data = json.loads(seed_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            seed_data = {}
+    if not seed_data:
+        seed_data = {
+            "Product": [
+                "Led cross-functional roadmap delivery for a 6-person squad.",
+                "Defined product strategy with measurable quarterly OKRs.",
+                "Improved activation rate by 18% through A/B testing.",
+            ],
+            "Design": [
+                "Ran 12+ user interviews to validate early product direction.",
+                "Shipped a new design system that reduced QA cycles by 30%.",
+                "Prototyped and tested 5 flows in Figma before development.",
+            ],
+            "Data": [
+                "Built analytics dashboards to track retention cohorts.",
+                "Instrumented key events to improve funnel visibility.",
+                "Partnered with data science to launch churn models.",
+            ],
+        }
     seed_rows = [
-        ("Product", "Led cross-functional roadmap delivery for a 6-person squad."),
-        ("Product", "Defined product strategy with measurable quarterly OKRs."),
-        ("Product", "Improved activation rate by 18% through A/B testing."),
-        ("Design", "Ran 12+ user interviews to validate early product direction."),
-        ("Design", "Shipped a new design system that reduced QA cycles by 30%."),
-        ("Design", "Prototyped and tested 5 flows in Figma before development."),
-        ("Data", "Built analytics dashboards to track retention cohorts."),
-        ("Data", "Instrumented key events to improve funnel visibility."),
-        ("Data", "Partnered with data science to launch churn models."),
+        (category, pointer)
+        for category, pointers in seed_data.items()
+        for pointer in pointers
     ]
     conn.executemany(
         "INSERT OR IGNORE INTO resume_pointers (category, pointer) VALUES (?, ?)",
@@ -87,6 +107,11 @@ def add_pointer(conn: sqlite3.Connection, category: str, pointer: str) -> bool:
         return True
     except sqlite3.IntegrityError:
         return False
+
+
+def remove_pointer(conn: sqlite3.Connection, pointer: str) -> None:
+    conn.execute("DELETE FROM resume_pointers WHERE pointer = ?", (pointer,))
+    conn.commit()
 
 
 st.set_page_config(page_title="Rapid Resume", page_icon="📝", layout="centered")
@@ -184,12 +209,34 @@ with st.sidebar:
                     st.session_state.setdefault(
                         key, pointer in st.session_state["selected_pointers"]
                     )
-                    st.checkbox(
-                        pointer,
-                        key=key,
-                        on_change=sync_selected_pointer,
-                        args=(pointer, key),
-                    )
+                    col_checkbox, col_remove = st.columns([0.9, 0.1])
+                    with col_checkbox:
+                        st.checkbox(
+                            pointer,
+                            key=key,
+                            on_change=sync_selected_pointer,
+                            args=(pointer, key),
+                        )
+                    with col_remove:
+                        if st.button("✕", key=f"remove_{group_name}_{pointer}"):
+                            with get_connection(db_path) as conn:
+                                remove_pointer(conn, pointer)
+                            st.session_state["selected_pointers"].discard(pointer)
+                            st.session_state.pop(key, None)
+                            current_lines = [
+                                normalize_line(line)
+                                for line in st.session_state[
+                                    "resume_pointers_text"
+                                ].splitlines()
+                                if line.strip()
+                            ]
+                            updated_lines = [
+                                line for line in current_lines if line != pointer
+                            ]
+                            st.session_state["resume_pointers_text"] = "\n".join(
+                                f"- {line}" for line in updated_lines
+                            )
+                            st.rerun()
     else:
         st.info("No pointers available yet.")
 
