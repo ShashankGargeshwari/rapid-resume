@@ -1,4 +1,92 @@
+import os
+import sqlite3
+from pathlib import Path
+
 import streamlit as st
+from streamlit.components.v1 import html
+
+
+def get_db_path_and_warning() -> tuple[Path, str]:
+    db_url = os.getenv("DATABASE_URL", "").strip()
+    data_dir = Path(__file__).resolve().parent / "data"
+    data_dir.mkdir(exist_ok=True)
+    default_path = data_dir / "resume_pointers.db"
+
+    if not db_url:
+        return default_path, ""
+
+    if db_url.startswith("sqlite:///"):
+        return Path(db_url.replace("sqlite:///", "", 1)).expanduser(), ""
+    if db_url.startswith("sqlite://"):
+        return Path(db_url.replace("sqlite://", "", 1)).expanduser(), ""
+
+    return (
+        default_path,
+        "Non-SQLite DATABASE_URL detected. Falling back to local SQLite.",
+    )
+
+
+def get_connection(db_path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def ensure_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS resume_pointers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT NOT NULL,
+            pointer TEXT NOT NULL UNIQUE
+        )
+        """
+    )
+    conn.commit()
+
+
+def seed_defaults(conn: sqlite3.Connection) -> None:
+    row = conn.execute("SELECT COUNT(*) AS count FROM resume_pointers").fetchone()
+    if row and row["count"]:
+        return
+    seed_rows = [
+        ("Product", "Led cross-functional roadmap delivery for a 6-person squad."),
+        ("Product", "Defined product strategy with measurable quarterly OKRs."),
+        ("Product", "Improved activation rate by 18% through A/B testing."),
+        ("Design", "Ran 12+ user interviews to validate early product direction."),
+        ("Design", "Shipped a new design system that reduced QA cycles by 30%."),
+        ("Design", "Prototyped and tested 5 flows in Figma before development."),
+        ("Data", "Built analytics dashboards to track retention cohorts."),
+        ("Data", "Instrumented key events to improve funnel visibility."),
+        ("Data", "Partnered with data science to launch churn models."),
+    ]
+    conn.executemany(
+        "INSERT OR IGNORE INTO resume_pointers (category, pointer) VALUES (?, ?)",
+        seed_rows,
+    )
+    conn.commit()
+
+
+def fetch_pointer_groups(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    rows = conn.execute(
+        "SELECT category, pointer FROM resume_pointers ORDER BY category, id"
+    ).fetchall()
+    groups: dict[str, list[str]] = {}
+    for row in rows:
+        groups.setdefault(row["category"], []).append(row["pointer"])
+    return groups
+
+
+def add_pointer(conn: sqlite3.Connection, category: str, pointer: str) -> bool:
+    try:
+        conn.execute(
+            "INSERT INTO resume_pointers (category, pointer) VALUES (?, ?)",
+            (category, pointer),
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
 
 
 st.set_page_config(page_title="Rapid Resume", page_icon="📝", layout="centered")
@@ -31,23 +119,14 @@ else:
     st.info("Add a job description to see extracted keywords.")
 
 st.subheader("Resume Pointers")
-pointer_groups = {
-    "Product": [
-        "Led cross-functional roadmap delivery for a 6-person squad.",
-        "Defined product strategy with measurable quarterly OKRs.",
-        "Improved activation rate by 18% through A/B testing.",
-    ],
-    "Design": [
-        "Ran 12+ user interviews to validate early product direction.",
-        "Shipped a new design system that reduced QA cycles by 30%.",
-        "Prototyped and tested 5 flows in Figma before development.",
-    ],
-    "Data": [
-        "Built analytics dashboards to track retention cohorts.",
-        "Instrumented key events to improve funnel visibility.",
-        "Partnered with data science to launch churn models.",
-    ],
-}
+db_path, db_warning = get_db_path_and_warning()
+if db_warning:
+    st.warning(db_warning)
+with get_connection(db_path) as conn:
+    ensure_schema(conn)
+    seed_defaults(conn)
+    pointer_groups = fetch_pointer_groups(conn)
+
 all_pointers = [
     pointer for pointers in pointer_groups.values() for pointer in pointers
 ]
@@ -64,30 +143,63 @@ def sync_selected_pointer(pointer: str, key: str) -> None:
     else:
         st.session_state["selected_pointers"].discard(pointer)
 
+
+def normalize_line(line: str) -> str:
+    stripped = line.strip()
+    if stripped.startswith(("-", "*")):
+        stripped = stripped[1:].lstrip()
+    return stripped
+
 with st.sidebar:
     st.header("Pointer Library")
     st.caption("Select items to add to the resume pointers box.")
-    tabs = st.tabs(list(pointer_groups.keys()))
-    for tab, (group_name, pointers) in zip(tabs, pointer_groups.items()):
-        with tab:
-            for idx, pointer in enumerate(pointers):
-                key = f"pointer_{group_name}_{idx}"
-                st.session_state.setdefault(
-                    key, pointer in st.session_state["selected_pointers"]
+    if pointer_groups:
+        tabs = st.tabs(list(pointer_groups.keys()))
+        for tab, (group_name, pointers) in zip(tabs, pointer_groups.items()):
+            with tab:
+                add_key = f"add_pointer_{group_name}"
+                add_input = st.text_input(
+                    "Add a new pointer",
+                    key=add_key,
+                    placeholder="Write a new bullet...",
                 )
-                st.checkbox(
-                    pointer,
-                    key=key,
-                    on_change=sync_selected_pointer,
-                    args=(pointer, key),
-                )
+                if st.button("Add", key=f"add_button_{group_name}"):
+                    new_pointer = add_input.strip()
+                    if new_pointer:
+                        with get_connection(db_path) as conn:
+                            ensure_schema(conn)
+                            added = add_pointer(conn, group_name, new_pointer)
+                        if added:
+                            st.session_state["selected_pointers"].add(new_pointer)
+                            st.session_state[f"pointer_{group_name}_{new_pointer}"] = True
+                            st.success("Pointer added.")
+                            st.rerun()
+                        else:
+                            st.info("That pointer already exists.")
+                    else:
+                        st.warning("Please enter a pointer first.")
+
+                for idx, pointer in enumerate(pointers):
+                    key = f"pointer_{group_name}_{pointer}"
+                    st.session_state.setdefault(
+                        key, pointer in st.session_state["selected_pointers"]
+                    )
+                    st.checkbox(
+                        pointer,
+                        key=key,
+                        on_change=sync_selected_pointer,
+                        args=(pointer, key),
+                    )
+    else:
+        st.info("No pointers available yet.")
 
 selected_pointers = list(st.session_state["selected_pointers"])
-current_lines = [
-    line.strip()
+current_lines_raw = [
+    line
     for line in st.session_state["resume_pointers_text"].splitlines()
     if line.strip()
 ]
+current_lines = [normalize_line(line) for line in current_lines_raw]
 kept_lines = [
     line
     for line in current_lines
@@ -96,7 +208,7 @@ kept_lines = [
 for pointer in selected_pointers:
     if pointer not in kept_lines:
         kept_lines.append(pointer)
-computed_text = "\n".join(kept_lines)
+computed_text = "\n".join(line for line in kept_lines)
 
 resume_pointers = st.text_area(
     "Resume pointers",
@@ -107,3 +219,17 @@ resume_pointers = st.text_area(
 st.session_state["resume_pointers_text"] = resume_pointers
 if not resume_pointers.strip():
     st.caption("Use this space to draft impact statements aligned to the role.")
+else:
+    html(
+        f"""
+        <div style="display:flex; justify-content:flex-end; margin-top:8px;">
+          <button
+            style="padding:6px 10px; border-radius:6px; border:1px solid #ccc; background:#f7f7f7; cursor:pointer;"
+            onclick="navigator.clipboard.writeText({resume_pointers!r}); this.textContent='Copied!'; setTimeout(() => this.textContent='Copy', 1200);"
+          >
+            Copy
+          </button>
+        </div>
+        """,
+        height=44,
+    )
