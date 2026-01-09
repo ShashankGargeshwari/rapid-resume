@@ -7,6 +7,7 @@ import streamlit as st
 from streamlit.components.v1 import html
 
 
+
 def get_db_path_and_warning() -> tuple[Path, str]:
     db_url = os.getenv("DATABASE_URL", "").strip()
     data_dir = Path(__file__).resolve().parent / "data"
@@ -115,6 +116,11 @@ def remove_pointer(conn: sqlite3.Connection, pointer: str) -> None:
 
 
 st.set_page_config(page_title="Rapid Resume", page_icon="📝", layout="centered")
+
+
+
+
+
 st.title("Rapid Resume")
 st.caption("A minimal Streamlit starter app.")
 
