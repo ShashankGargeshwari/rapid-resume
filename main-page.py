@@ -5,7 +5,7 @@ from pathlib import Path
 
 import streamlit as st
 from streamlit.components.v1 import html
-
+from openai import OpenAI
 
 
 def get_db_path_and_warning() -> tuple[Path, str]:
@@ -13,6 +13,7 @@ def get_db_path_and_warning() -> tuple[Path, str]:
     data_dir = Path(__file__).resolve().parent / "data"
     data_dir.mkdir(exist_ok=True)
     default_path = data_dir / "resume_pointers.db"
+    
 
     if not db_url:
         return default_path, ""
@@ -117,9 +118,21 @@ def remove_pointer(conn: sqlite3.Connection, pointer: str) -> None:
 
 st.set_page_config(page_title="Rapid Resume", page_icon="📝", layout="centered")
 
+# Set OpenAI API key from Streamlit secrets
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
+# Set a default model
+if "openai_model" not in st.session_state:
+    st.session_state["openai_model"] = "gpt-3.5-turbo"
 
+prompt = "Hello, wassup"
 
+response = client.responses.create(
+        model="gpt-4o-mini",  # or "gpt-5.2" if you prefer :contentReference[oaicite:3]{index=3}
+        input=[{"role": "user", "content": st.session_state.prompt}],
+    )
+
+st.markdown(response)
 
 st.title("Rapid Resume")
 st.caption("A minimal Streamlit starter app.")
