@@ -7,6 +7,8 @@ import streamlit as st
 from streamlit.components.v1 import html
 from openai import OpenAI
 
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+
 
 def split_bulleted_pointers(bulleted_text: str) -> list[str]:
     pointers = []
@@ -17,6 +19,53 @@ def split_bulleted_pointers(bulleted_text: str) -> list[str]:
     return pointers
 
 
+class ResumePointer:
+    plain_text = ""
+    match_score = 0
+    match_keywords = []
+
+    def __init__(self, raw_text):
+        self.plain_text = raw_text
+
+    def render(self):
+        st.markdown(self.plain_text)
+        if(self.match_score <= 5):
+            st.badge(f"Relevance : {self.match_score}", color="red")
+        else:
+            if(self.match_score <=7):
+                st.badge(f"Relevance : {self.match_score}", color="orange")
+            else:
+                st.badge(f"Relevance : {self.match_score}", color="green")
+                
+        st.write("---")
+    
+    def match(self , keywords_list):
+        prompt = "Score how well this resume pointer (out of 10) is relevant to the list of keywords provided. Provide ONLY the number, with no trailing or leading text"
+        all_keywords = ""
+        for keyword in keywords_list:
+            all_keywords += keyword + " , "
+
+        response = client.responses.create(
+        model="gpt-4o-mini",  # or "gpt-5.2" if you prefer :contentReference[oaicite:3]{index=3}
+        input=[{"role": "user", "content": f"{prompt} Keywords : {all_keywords} Resume Pointer : {self.plain_text}"}],
+    )
+        self.match_score = int(response.output_text)
+
+
+class Keyword:
+    plain_text = ""
+    importance = 0
+    index = 0
+
+    def __init__(self, raw_text, imp, ind):
+        self.plain_text = raw_text
+        self.importance = raw_text
+        self.index = ind
+
+    def render(self):
+        st.markdown(f"{self.index}. {self.plain_text}")
+        
+        
 
 st.set_page_config(page_title="Rapid Resume", page_icon="📝", layout="centered")
 
@@ -39,7 +88,6 @@ response = client.responses.create(
 
 st.markdown(response.output_text)
 
-
 st.title("Job Description")
 
 job_description = st.text_area(
@@ -48,37 +96,52 @@ job_description = st.text_area(
     placeholder= "Paste Job Description Here"
 )
 
-
 st.title("Resume pointers")
 
-resume_pointers = st.text_area(
+resume_pointers_text = st.text_area(
     label = "Resume Pointers",
     height = 50,
     placeholder= "Paste Resume Pointers Here"
 )
 
-pointer_list = split_bulleted_pointers(resume_pointers)
+pointer_list = split_bulleted_pointers(resume_pointers_text)
+
+resume_pointers = []
 
 for pointer in pointer_list:
-    st.markdown(pointer)
+    r = ResumePointer(pointer)
+    resume_pointers.append(r)
 
-prompt = "This is the job description " + job_description + "extract a bulleted list of keywords that should be used in a successful resume"
+prompt = f"""This is the job description {job_description} extract a bulleted list of keywords that should be used in a successful resume.
+    Avoid any leading or trailing sentences. Just have the bulleted list. Sort it in descending order of importance"""
+
+keywords_list = ""
 
 if job_description.strip() :
     response = client.responses.create(
             model="gpt-4o-mini",  # or "gpt-5.2" if you prefer :contentReference[oaicite:3]{index=3}
             input=[{"role": "user", "content": prompt}],
         )
-    keywords_list = response.output_text
+    keywords_list = split_bulleted_pointers(response.output_text)
 
 with st.sidebar:
     st.header("KeyWords")
-    st.markdown(keywords_list)
+    i = 1
+    for keyword in keywords_list:
+        k = Keyword(keyword, 0, i)
+        k.render()
+        i = i+1
+
+
+for r in resume_pointers:
+    r.match(keywords_list)
+    r.render()
+    
 
 
 
-
-
+ 
+        
 
   
 
