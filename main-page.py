@@ -1,3 +1,5 @@
+"""Streamlit app for tailoring resume pointers to a job description."""
+
 import json
 import os
 import sqlite3
@@ -7,10 +9,12 @@ import streamlit as st
 from streamlit.components.v1 import html
 from openai import OpenAI
 
+# Initialize the OpenAI client with Streamlit secrets.
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 
 def split_bulleted_pointers(bulleted_text: str) -> list[str]:
+    """Convert a bulleted string into a list of plain text lines."""
     pointers = []
     for line in bulleted_text.splitlines():
         cleaned = line.lstrip("-*•")
@@ -20,14 +24,17 @@ def split_bulleted_pointers(bulleted_text: str) -> list[str]:
 
 
 class ResumePointer:
+    """Represents a resume bullet and its relevance score."""
     plain_text = ""
     match_score = 0
     match_keywords = []
 
     def __init__(self, raw_text):
+        """Initialize with the raw bullet text."""
         self.plain_text = raw_text
 
     def render(self):
+        """Render the pointer and a color-coded relevance badge."""
         st.markdown(self.plain_text)
         if(self.match_score <= 5):
             st.badge(f"Relevance : {self.match_score}", color="red")
@@ -40,6 +47,7 @@ class ResumePointer:
         st.write("---")
     
     def match(self , keywords_list):
+        """Score relevance of this pointer against a list of keywords."""
         prompt = "Score how well this resume pointer (out of 10) is relevant to the list of keywords provided. Provide ONLY the number, with no trailing or leading text"
         all_keywords = ""
         for keyword in keywords_list:
@@ -53,29 +61,33 @@ class ResumePointer:
 
 
 class Keyword:
+    """Simple keyword wrapper for rendering in the sidebar."""
     plain_text = ""
     importance = 0
     index = 0
 
     def __init__(self, raw_text, imp, ind):
+        """Initialize the keyword with display metadata."""
         self.plain_text = raw_text
         self.importance = raw_text
         self.index = ind
 
     def render(self):
+        """Render the keyword with its index in the sidebar."""
         st.markdown(f"{self.index}. {self.plain_text}")
         
         
 
 st.set_page_config(page_title="Rapid Resume", page_icon="📝", layout="centered")
 
-# Set OpenAI API key from Streamlit secrets
+# Set OpenAI API key from Streamlit secrets.
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# Set a default model
+# Set a default model.
 if "openai_model" not in st.session_state:
     st.session_state["openai_model"] = "gpt-3.5-turbo"
 
+# Initial greeting for the user.
 prompt = "You are a resume helper agent. Your first message will be a welcome message " \
     "that tells the user in a single concise line that you will help me with my resume today," \
     "and append a made up, cute, success code that still looks technical in [] at the end of the message"
@@ -144,4 +156,3 @@ for r in resume_pointers:
         
 
   
-
