@@ -9,6 +9,20 @@ import streamlit as st
 from streamlit.components.v1 import html
 from openai import OpenAI
 
+import logging
+
+# Setup Logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+
+logger = logging.getLogger(__name__)
+
+logger.info("App started now")
+
+
 # Initialize the OpenAI client with Streamlit secrets.
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
@@ -43,12 +57,16 @@ class ResumePointer:
                 st.badge(f"Relevance : {self.match_score}", color="orange")
             else:
                 st.badge(f"Relevance : {self.match_score}", color="green")
+
+        st.markdown("**Keywords**")
+        st.text(self.match_keywords)
                 
         st.write("---")
     
     def match(self , keywords_list):
         """Score relevance of this pointer against a list of keywords."""
-        prompt = "Score how well this resume pointer (out of 10) is relevant to the list of keywords provided. Provide ONLY the number, with no trailing or leading text"
+        prompt = """Score how well this resume pointer (out of 10) is relevant to the list of keywords provided. Provide ONLY the number,
+        with no trailing or leading text. Show all the keywords in a single line seprarated by commans, no bullets"""
         all_keywords = ""
         for keyword in keywords_list:
             all_keywords += keyword + " , "
@@ -56,15 +74,25 @@ class ResumePointer:
         response = client.responses.create(
         model="gpt-4o-mini",  # or "gpt-5.2" if you prefer :contentReference[oaicite:3]{index=3}
         input=[{"role": "user", "content": f"{prompt} Keywords : {all_keywords} Resume Pointer : {self.plain_text}"}],
-    )
+        )
+
         self.match_score = int(response.output_text)
 
+        # list out keywords for which this resume pointer is a good match. 
+        prompt = """List out the at most top 6 keywords this resume pointer is a good match for. If you cannot find 3 good matches,
+        Show only the keywords that are a match. If they are fewer or no matches, then show only the appropriate number of  keywords.
+        Don't have any leading ortrailing text"""
+        self.match_keywords = client.responses.create(
+        model="gpt-4o-mini",  # or "gpt-5.2" if you prefer :contentReference[oaicite:3]{index=3}
+        input=[{"role": "user", "content": f"{prompt} Keywords : {all_keywords} Resume Pointer : {self.plain_text}"}],
+        ).output_text
 
 class Keyword:
     """Simple keyword wrapper for rendering in the sidebar."""
     plain_text = ""
     importance = 0
     index = 0
+    frequency = 0
 
     def __init__(self, raw_text, imp, ind):
         """Initialize the keyword with display metadata."""
@@ -74,9 +102,15 @@ class Keyword:
 
     def render(self):
         """Render the keyword with its index in the sidebar."""
-        st.markdown(f"{self.index}. {self.plain_text}")
-        
-        
+        st.markdown(f"{self.index}. {self.plain_text} [ {self.frequency}]")
+
+    def update_frequency(self, resume_pointers: list[ResumePointer]):
+        """Update the frequency of this keyword matching resume poitners"""
+        for resume_pointer in resume_pointers:
+            logger.info(f" keyword :   + {self.plain_text} + resume pointer match  : {resume_pointer.match_keywords}") 
+            if(self.plain_text in resume_pointer.match_keywords):
+                self.frequency = self.frequency+1
+                logger.info("!!! match !!!")
 
 st.set_page_config(page_title="Rapid Resume", page_icon="📝", layout="centered")
 
@@ -112,7 +146,7 @@ st.title("Resume pointers")
 
 resume_pointers_text = st.text_area(
     label = "Resume Pointers",
-    height = 50,
+    height = 'content',
     placeholder= "Paste Resume Pointers Here"
 )
 
@@ -136,13 +170,7 @@ if job_description.strip() :
         )
     keywords_list = split_bulleted_pointers(response.output_text)
 
-with st.sidebar:
-    st.header("KeyWords")
-    i = 1
-    for keyword in keywords_list:
-        k = Keyword(keyword, 0, i)
-        k.render()
-        i = i+1
+
 
 
 for r in resume_pointers:
@@ -150,7 +178,15 @@ for r in resume_pointers:
     r.render()
     
 
+with st.sidebar:
+    st.header("KeyWords")
+    i = 1
+    for keyword in keywords_list:
 
+        k = Keyword(keyword, 0, i)
+        k.update_frequency(resume_pointers)
+        k.render()
+        i = i+1
 
  
         
